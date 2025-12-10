@@ -16,12 +16,27 @@ def generate_questions(payload):
 
         for qtype, num in counts.items():
             for _ in range(num):
-                q_data = generate_question(
-                    skill=name,
-                    difficulty=difficulty,
-                    qtype=qtype,
-                    options=global_settings.get("mcq_options", 4),
-                )
+
+                if qtype == "audio":
+                    q_data = {
+                        "prompt_text": f"Describe a situation where you used {name} effectively.",
+                        "type": "audio"
+                    }
+
+                elif qtype == "video":
+                    q_data = {
+                        "prompt_text": f"Record a short video explaining a {name}-related challenge you solved.",
+                        "type": "video"
+                    }
+
+                else:
+                    q_data = generate_question(
+                        skill=name,
+                        difficulty=difficulty,
+                        qtype=qtype,
+                        options=global_settings.get("mcq_options", 4),
+                    )
+
                 all_questions.append({
                     "question_id": str(uuid.uuid4()),
                     "skill": name,

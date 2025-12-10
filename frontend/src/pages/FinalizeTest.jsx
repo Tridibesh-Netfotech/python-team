@@ -1,6 +1,3 @@
-// File: src/pages/FinalizeTest.jsx
-// Final page for test finalization, dashboard overview, and test publishing
-
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { 
@@ -116,12 +113,6 @@ const FinalizeTest = () => {
       navigator.clipboard.writeText(testResult.test_link)
       setCopySuccess(true)
       setTimeout(() => setCopySuccess(false), 2000)
-    }
-  }
-
-  const handlePublishTest = () => {
-    if (testResult?.test_link) {
-      window.open(testResult.test_link, '_blank')
     }
   }
 
@@ -245,7 +236,7 @@ const FinalizeTest = () => {
                   />
                   <YAxis fontSize={12} />
                   <Tooltip 
-                    formatter={(value, name) => [value, 'Questions']}
+                    formatter={(value) => [value, 'Questions']}
                     labelFormatter={(label) => {
                       const item = chartData.find(d => d.skill === label)
                       return item?.fullName || label
@@ -345,7 +336,7 @@ const FinalizeTest = () => {
               ) : (
                 <div className="space-y-3">
                   <button
-                    onClick={handlePublishTest}
+                    onClick={() => navigate("/Examination")}
                     className="btn-primary w-full flex items-center justify-center space-x-2"
                   >
                     <Share2 className="h-4 w-4" />

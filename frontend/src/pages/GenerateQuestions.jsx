@@ -1,232 +1,264 @@
-// File: src/pages/GenerateQuestions.jsx
-// Main page for generating questions with skill selection and configuration
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import TestDetail from '../components/TestDetail';
+import QuestionMaker from '../components/QuestionMaker';
+import ReviewFinalise from '../components/ReviewFinalise';
+import AssessmentAPI from '../api/generateAssessmentApi';
 
-import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Loader2, Sparkles, ArrowRight } from 'lucide-react'
-import SkillSelector from '../components/SkillSelector'
-import QuestionCard from '../components/QuestionCard'
-import { fetchSkills } from '../api/skills'
-import { generateQuestions } from '../api/questions'
+function GenerateAssessment() {
+  const navigate = useNavigate();
+  const [currentStep, setCurrentStep] = useState(1);
 
-const GenerateQuestions = () => {
-  const [skills, setSkills] = useState([])
-  const [skillSelections, setSkillSelections] = useState([])
-  const [questions, setQuestions] = useState([])
-  const [loading, setLoading] = useState(false)
-  const [skillsLoading, setSkillsLoading] = useState(true)
-  const [testTitle, setTestTitle] = useState('')
-  const [testDescription, setTestDescription] = useState('')
-  const navigate = useNavigate()
+  const [formData, setFormData] = useState({
+    roleTitle: '',
+    skills: [],
+    experience: '',
+    workType: '',
+    location: '',
+    currency: 'INR',
+    minCompensation: '',
+    maxCompensation: '',
+    skillLevels: [],
+    startDate: null,
+    startTime: null,
+    endDate: null,
+    endTime: null,
+  });
 
-  useEffect(() => {
-    loadSkills()
-  }, [])
+  const [questions, setQuestions] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-  const loadSkills = async () => {
+  const handleNext = async () => {
+    if (currentStep === 1) {
+      // validate recruiter input before generating questions
+      if (!formData.roleTitle || formData.skills.length === 0) {
+        setError('Please fill all required fields and add at least one skill.');
+        return;
+      }
+      await generateQuestions();
+    } else if (currentStep < 3) {
+      setCurrentStep(currentStep + 1);
+    }
+  };
+
+  const handleBack = () => {
+    if (currentStep > 1) {
+      setCurrentStep(currentStep - 1);
+      setError(null);
+    }
+  };
+
+  const handleFormUpdate = (patch) =>
+    setFormData(prev => ({ ...prev, ...patch }));
+
+  const generateQuestions = async () => {
+    setLoading(true);
+    setError(null);
+
     try {
-      setSkillsLoading(true)
-      const skillsData = await fetchSkills()
-      setSkills(skillsData)
-    } catch (error) {
-      console.error('Failed to load skills:', error)
-      alert('Failed to load skills. Please check if the backend is running.')
-    } finally {
-      setSkillsLoading(false)
-    }
-  }
+      const payload = AssessmentAPI.transformToBackendPayload(formData);
 
-  const handleGenerateQuestions = async () => {
-    if (skillSelections.length === 0) {
-      alert('Please select at least one skill')
-      return
-    }
-
-    const hasQuestions = skillSelections.some(sel => 
-      sel.mcq > 0 || sel.coding > 0 || sel.audio > 0 || sel.video > 0
-    )
-
-    if (!hasQuestions) {
-      alert('Please specify at least one question for any skill')
-      return
-    }
-
-    try {
-      setLoading(true)
-      const generatedQuestions = await generateQuestions(skillSelections, testTitle, testDescription)
-      setQuestions(generatedQuestions)
+      if (!payload.skills || payload.skills.length === 0) {
+        throw new Error('Please select at least one skill with question counts greater than 0');
+      }
       
-      // Store questions in localStorage for other pages to access
-      localStorage.setItem('generatedQuestions', JSON.stringify(generatedQuestions))
-      localStorage.setItem('skillSelections', JSON.stringify(skillSelections))
-      localStorage.setItem('testTitle', testTitle)
-      localStorage.setItem('testDescription', testDescription)
-    } catch (error) {
-      console.error('Failed to generate questions:', error)
-      alert('Failed to generate questions. Please check if the backend is running and try again.')
+      console.log('Generating questions with payload:', payload);
+
+      const response = await AssessmentAPI.generateTest(payload);
+
+      if (response && response.status === 'success' && response.questions) {
+        const transformedQuestions = AssessmentAPI.transformToFrontendQuestions(response.questions);
+        console.log('Generated questions:', transformedQuestions);
+        setQuestions(transformedQuestions);
+        setCurrentStep(2);
+      } else {
+        throw new Error(response?.message || 'Invalid response from server');
+      }
+    } catch (err) {
+      console.error('Error generating questions:', err);
+      setError(err.message || 'Failed to generate questions. Please try again.');
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
-  const proceedToReview = () => {
-    if (questions.length > 0) {
-      navigate('/review')
+  // finalize test 
+  const handleFinalize = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const payload = {
+        test_title: formData.roleTitle,
+        test_description: `Assessment for ${formData.roleTitle} - ${formData.experience || ''} experience`,
+        job_id: null,
+        questions,
+
+        // send schedule to backend
+        examDate: formData.startDate,
+        startTime: formData.startTime,
+        endDate: formData.endDate,
+        endTime: formData.endTime,
+      };
+
+      const response = await AssessmentAPI.finalizeTest(payload);
+
+      if (!response || response.status !== 'success') {
+        throw new Error(response?.message || 'Failed to finalize test');
+      }
+
+      const workTypeMap = {
+        "1": "Full-time",
+        "2": "Part-time",
+        "3": "Contract",
+        "remote": "Remote",
+        "on-site": "On-site",
+        "hybrid": "Hybrid"
+      };
+
+      const jobData = {
+        title: response.test_title || formData.roleTitle,
+        skills: formData.skills || [],
+        location: formData.location || "Remote",
+        workType: workTypeMap[formData.workType] || formData.workType || "Full-time",
+        employmentMode: formData.employmentMode || "On-site",
+        currency: formData.currency || "INR",
+        minCompensation: formData.minCompensation || "-",
+        maxCompensation: formData.maxCompensation || "-",
+        description: `This is an assessment for the ${formData.roleTitle} role.`,
+
+        // Correct full schedule
+        startDate: formData.startDate,
+        startTime: formData.startTime,
+        endDate: formData.endDate,
+        endTime: formData.endTime,
+
+        expiryTime: response.expiry_time,
+        isActive: true,
+        questionSetId: response.question_set_id,
+      };
+
+      console.log("Final formData before saving jobData:", formData);
+
+      const saved = JSON.parse(localStorage.getItem("jobDataList")) || [];
+      saved.push(jobData);
+      localStorage.setItem("jobDataList", JSON.stringify(saved));
+      localStorage.setItem("jobData", JSON.stringify(jobData));
+      console.log("Saving schedule:", formData.startDate, formData.startTime);
+
+      navigate('/Created', {
+        state: {
+          testTitle: response.test_title,
+          questionSetId: response.question_set_id,
+          totalQuestions: questions.length,
+          expiryTime: response.expiry_time,
+        },
+      });
+
+    } catch (error) {
+      console.error("Finalize error:", error);
+      setError(error.message || "Failed to finalize test. Please try again.");
+    } finally {
+      setLoading(false);
     }
-  }
+  };
 
-  const totalQuestions = skillSelections.reduce((sum, sel) => 
-    sum + sel.mcq + sel.coding + sel.audio + sel.video, 0
-  )
+  const steps = [
+    { number: 1, label: 'Test Details' },
+    { number: 2, label: 'Question Maker' },
+    { number: 3, label: 'Review & Finalise' }
+  ];
 
-  if (skillsLoading) {
-    return (
-      <div className="flex justify-center items-center min-h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
-        <span className="ml-2 text-gray-600">Loading skills...</span>
-      </div>
-    )
-  }
+  const totalSteps = steps.length;
+  const progress = totalSteps > 1 ? ((currentStep - 1) / (totalSteps - 1)) * 100 : 0;
 
   return (
-    <div className="w-full max-w-none px-4">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Configure Question Generation</h1>
-        <p className="text-gray-600">Select the number of questions to generate for each skill and difficulty level.</p>
-      </div>
+    <div className="min-h-screen bg-gray-50 p-6">
+      <h1 className="text-2xl font-bold text-gray-900 mb-8">Generate Assessment</h1>
 
-      {/* Test Configuration */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
-        <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Test Information</h2>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Test Title
-              </label>
-              <input
-                type="text"
-                value={testTitle}
-                onChange={(e) => setTestTitle(e.target.value)}
-                placeholder="e.g., Frontend Developer - JS & React"
-                className="input-field"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Test Description
-              </label>
-              <textarea
-                value={testDescription}
-                onChange={(e) => setTestDescription(e.target.value)}
-                placeholder="Brief description of the test..."
-                className="input-field h-20 resize-none"
-              />
-            </div>
-          </div>
+      {/* Error Message */}
+      {error && (
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <p className="text-red-800 text-sm">{error}</p>
         </div>
+      )}
 
-        <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick Stats</h2>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="text-center p-4 bg-blue-50 rounded-lg">
-              <div className="text-2xl font-bold text-blue-600">{skillSelections.length}</div>
-              <div className="text-sm text-gray-600">Skills Selected</div>
-            </div>
-            <div className="text-center p-4 bg-green-50 rounded-lg">
-              <div className="text-2xl font-bold text-green-600">{totalQuestions}</div>
-              <div className="text-sm text-gray-600">Total Questions</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Skill Selection */}
-      <SkillSelector 
-        skills={skills}
-        onSelectionChange={setSkillSelections}
-      />
-
-      {/* Generate Button */}
-      {skillSelections.length > 0 && (
-        <div className="mt-8 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-          <div className="text-sm text-gray-600">
-            <span className="font-medium">{totalQuestions}</span> questions will be generated across{' '}
-            <span className="font-medium">{skillSelections.length}</span> skills
-          </div>
-          
-          <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
-            <button
-              onClick={handleGenerateQuestions}
-              disabled={loading || skillSelections.length === 0}
-              className="btn-primary flex items-center justify-center space-x-2 px-6 py-3 disabled:opacity-50 disabled:cursor-not-allowed w-full sm:w-auto"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Generating...</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="h-4 w-4" />
-                  <span>Generate Questions</span>
-                </>
-              )}
-            </button>
-
-            {questions.length > 0 && (
-              <button
-                onClick={proceedToReview}
-                className="btn-secondary flex items-center justify-center space-x-2 px-6 py-3 w-full sm:w-auto"
-              >
-                <span>Review Questions</span>
-                <ArrowRight className="h-4 w-4" />
-              </button>
-            )}
+      {/* Loading Overlay */}
+      {loading && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-xl flex items-center space-x-3">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+            <p className="text-gray-700 font-medium">
+              {currentStep === 1 ? 'Generating questions...' : 'Finalizing test...'}
+            </p>
           </div>
         </div>
       )}
 
-      {/* Generated Questions Preview */}
-      {questions.length > 0 && (
-        <div className="mt-8">
-          <div className="card">
-            <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-6 gap-4">
-              <h2 className="text-xl font-semibold text-gray-900">Generated Questions Preview</h2>
-              <div className="text-sm text-gray-600">
-                <span className="font-medium">{questions.length}</span> questions generated
+      {/* Step Progress Bar */}
+      <div className="bg-white rounded-2xl border border-gray-300 px-6 pt-5 pb-7 shadow-md relative">
+        <div className="flex items-start justify-between">
+          {steps.map((step) => (
+            <div key={step.number} className="flex-1 flex flex-col items-center">
+              <div
+                className={`w-9 h-9 rounded-full flex items-center justify-center text-[15px] font-semibold ${
+                  step.number <= currentStep ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-500'
+                }`}
+              >
+                {step.number}
               </div>
-            </div>
-            
-            <div className="grid gap-4 max-h-96 overflow-y-auto">
-              {questions.slice(0, 6).map((question) => (
-                <QuestionCard key={question.id} question={question} preview={true} />
-              ))}
-              
-              {questions.length > 6 && (
-                <div className="text-center py-4 text-gray-500 text-sm">
-                  ... and {questions.length - 6} more questions
-                </div>
-              )}
-            </div>
-            
-            <div className="mt-6 pt-4 border-t border-gray-200 flex justify-end">
-              <button
-                onClick={proceedToReview}
-                className="btn-primary flex items-center space-x-2 px-6 py-3"
+              <span
+                className={`mt-2 text-sm font-medium text-center ${
+                  step.number <= currentStep ? 'text-gray-700' : 'text-gray-400'
+                }`}
               >
-                <span>Review & Edit All Questions</span>
-                <ArrowRight className="h-4 w-4" />
-              </button>
+                {step.label}
+              </span>
             </div>
-          </div>
+          ))}
         </div>
-      )}
+
+        <div className="absolute left-4 right-4 bottom-3 h-1 bg-gray-200 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-blue-500 transition-all duration-300 ease-out"
+            style={{ width: `${Math.max(0, Math.min(100, progress))}%` }}
+          />
+        </div>
+      </div>
+
+      {/* Step Components */}
+      <main className="py-8">
+        {currentStep === 1 && (
+          <TestDetail
+            formData={formData}
+            onUpdate={handleFormUpdate}
+            onNext={handleNext}
+            onCancel={handleBack}
+            loading={loading}
+          />
+        )}
+        {currentStep === 2 && (
+          <QuestionMaker
+            questions={questions}
+            onUpdate={setQuestions}
+            onNext={handleNext}
+            onBack={handleBack}
+            loading={loading}
+          />
+        )}
+        {currentStep === 3 && (
+          <ReviewFinalise
+            formData={formData}
+            questions={questions}
+            onFinalize={handleFinalize}
+            onBack={handleBack}
+            loading={loading}
+          />
+        )}
+      </main>
     </div>
-  )
+  );
 }
 
-export default GenerateQuestions
-      
-     
+export default GenerateAssessment;

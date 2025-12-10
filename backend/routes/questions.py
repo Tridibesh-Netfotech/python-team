@@ -34,6 +34,38 @@ def generate_test():
             "message": str(e)
         }), 500
 
+@questions_bp.route("/question-set/<question_set_id>/questions", methods=["GET"])
+def get_questions(question_set_id):
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT content FROM questions WHERE question_set_id = %s", (question_set_id,))
+        rows = cur.fetchall()
+        questions = [
+            r[0] if isinstance(r[0], dict) else json.loads(r[0])
+            for r in rows
+        ]
+        return jsonify({
+            "status": "success",
+            "question_set_id": question_set_id,
+            "questions": questions
+        }), 200
+    except Exception as e:
+        print(e)
+        return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        if conn: conn.close()
+
+def convert_ampm_to_24h(time_str):
+    if not time_str:
+        return None
+    try:
+        time_str = time_str.strip().upper()
+        in_time = datetime.datetime.strptime(time_str, "%I:%M %p")
+        return in_time.strftime("%H:%M")
+    except ValueError:
+        return None
 
 @questions_bp.route("/finalize-test", methods=["POST"])
 def finalize_test():
@@ -102,9 +134,32 @@ def finalize_test():
 
         # Set timestamps
         created_at = datetime.datetime.utcnow()
-        expiry_time = created_at + datetime.timedelta(hours=48)
+
+        # ✅ Use user selected end date/time if provided
+        exam_date = data.get("examDate")
+        start_time = data.get("startTime")
+
+        end_date = data.get("endDate")
+        end_time = data.get("endTime")
+
+        print(f"Received exam date: {exam_date}, start time: {start_time}")
+        print(f"Received end date: {end_date}, end time: {end_time}")
+
+        # ✅ Build expiry_time correctly
+        if end_date and end_time:
+            end_time_24 = convert_ampm_to_24h(end_time)
+            if end_time_24:
+                expiry_time = datetime.datetime.fromisoformat(f"{end_date}T{end_time_24}:00")
+            else:
+                expiry_time = created_at + datetime.timedelta(hours=48)
+        else:
+            # fallback to 48 hours if not provided
+            expiry_time = created_at + datetime.timedelta(hours=48)
+        
+        print("Parsed times:")
+        print("end_time_24:", end_time_24 if end_date else None)
         print(f"Created at: {created_at}")
-        print(f"Expires at: {expiry_time}")
+        print(f"Expires at (final): {expiry_time}")
 
         # Insert into question_set table
         print("\nInserting into question_set table...")
@@ -158,20 +213,12 @@ def finalize_test():
             try:
                 cur.execute("""
                     INSERT INTO questions (
-                        id, question_set_id, type, skill, difficulty,
-                        content, time_limit, positive_marking, negative_marking, created_at
+                        question_set_id, content, created_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s)
                 """, (
-                    question_id,
-                    question_set_id,
-                    q["type"],
-                    q["skill"], 
-                    q["difficulty"],
-                    json.dumps(q["content"]),
-                    q.get("time_limit", 60),
-                    q.get("positive_marking", 0),
-                    q.get("negative_marking", 0),
+                    str(question_set_id),
+                    json.dumps(q),
                     created_at
                 ))
                 print(f"  ✓ Question {i} inserted successfully")

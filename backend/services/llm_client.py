@@ -47,12 +47,42 @@ def generate_question(skill: str, difficulty: str, qtype: str, options: int = 4)
     data = resp.json()
 
     try:
-        # Deepseek returns GPT-style response: choices[0].message.content
         content = data["choices"][0]["message"]["content"]
-        return json.loads(content)
+        parsed = json.loads(content)
     except Exception:
-        # fallback if parsing fails
-        return {"raw": content}
+        return {"question": "Bad LLM response", "options": [], "correct_answer": None}
+
+    # NORMALIZE OUTPUT HERE
+    if qtype == "mcq":
+        return {
+            "question": parsed.get("prompt"),
+            "options": parsed.get("options", []),
+            "correct_answer": parsed.get("answer")   # A/B/C/D
+        }
+
+    if qtype == "coding":
+        return {
+            "question": parsed.get("prompt"),
+            "input_spec": parsed.get("input_spec"),
+            "output_spec": parsed.get("output_spec"),
+            "examples": parsed.get("examples", [])
+        }
+
+    if qtype == "audio":
+        return {
+            "question": parsed.get("prompt_text"),
+            "expected_keywords": parsed.get("expected_keywords", []),
+            "rubric": parsed.get("rubric")
+        }
+
+    if qtype == "video":
+        return {
+            "question": parsed.get("prompt_text"),
+            "rubric": parsed.get("rubric"),
+            "suggested_time_seconds": parsed.get("suggested_time_seconds", 60)
+        }
+
+    return parsed
 
 
 def evaluate_answer(question_type: str, question_text: str, correct_answer: str, candidate_answer: str):
